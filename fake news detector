@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Fake News Detector — Demo</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root{
+      --bg:#0f1724;
+      --card:#ffffff;
+      --accent:#6ee7b7;
+      --danger:#ff6b6b;
+      --muted:#6b7280;
+      --input-bg:#f0f4ff;
+      --text-color:#111827;
+    }
+
+    *{box-sizing:border-box;font-family:Constantia, "Times New Roman", serif;}
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--text-color);
+      min-height:100vh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:32px;
+      overflow:hidden;
+    }
+
+    canvas#bgCanvas{
+      position:fixed;
+      top:0;
+      left:0;
+      width:100%;
+      height:100%;
+      z-index:-1;
+    }
+
+    .wrap{width:100%;max-width:980px;z-index:2;}
+    header{display:flex;align-items:center;gap:16px;margin-bottom:18px;}
+    .logo{
+      width:56px;
+      height:56px;
+      border-radius:12px;
+      background:linear-gradient(135deg,#2daad4,#fa60f0);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color:#012;
+      font-weight:800;
+    }
+    h1{margin:0;font-size:20px}
+    p.lead{margin:4px 0 0;color:var(--muted);font-size:13px}
+
+    .grid{display:grid;grid-template-columns:1fr 420px;gap:20px}
+    .card{
+      background:var(--card);
+      border:1px solid rgba(0,0,0,0.1);
+      padding:18px;
+      border-radius:12px;
+      color:var(--text-color);
+    }
+
+    textarea{
+      width:100%;
+      min-height:180px;
+      background:var(--input-bg);
+      border:1px solid rgba(0,0,0,0.2);
+      padding:12px;
+      border-radius:8px;
+      color:#111827;
+      resize:vertical;
+      font-family:Constantia, "Times New Roman", serif;
+    }
+
+    .controls{display:flex;gap:10px;margin-top:12px}
+    .btn{
+      background:linear-gradient(90deg,#60b5fa,#d42dd4);
+      border:none;color:#012;padding:10px 14px;border-radius:10px;font-weight:700;cursor:pointer;
+    }
+    .btn.ghost{
+      background:transparent;
+      border:1px solid rgba(0,0,0,0.2);
+      color:var(--muted);
+    }
+
+    .result-header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .label-pill{
+      padding:6px 10px;
+      border-radius:999px;
+      font-weight:700;
+      background:rgba(0,0,0,0.05);
+      color:var(--text-color);
+    }
+
+    .evidence{margin-top:12px}
+    .evidence-item{
+      background:rgba(0,0,0,0.05);
+      padding:10px;
+      border-radius:8px;
+      margin-bottom:8px;
+      border-left:4px solid rgba(0,0,0,0.1);
+    }
+    .muted{color:var(--muted);font-size:13px}
+
+    .footer{margin-top:14px;color:var(--muted);font-size:13px}
+
+
+    @media(max-width:900px){.grid{grid-template-columns:1fr} .card-right{order:-1}}
+  </style>
+</head>
+<body>
+
+  <canvas id="bgCanvas"></canvas>
+
+  <div class="wrap">
+    <header>
+      <div class="logo">FND</div>
+      <div>
+        <h1>Fake News & Misinformation Detector — 24h Prototype</h1>
+        <p class="lead">Paste a headline, tweet or WhatsApp forward. Demo frontend + visualisations. Connect to backend at <code>/api/check</code>.</p>
+      </div>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <label class="muted">Input text (news / tweet / forward):</label>
+        <textarea id="inputText" placeholder="Paste text to verify..."></textarea>
+        <div class="controls">
+          <button class="btn" id="checkBtn">Check</button>
+          <button class="btn ghost" id="clearBtn">Clear</button>
+          <button class="btn ghost" id="demoBtn">Load Demo</button>
+        </div>
+        <div id="statusArea" style="margin-top:14px"></div>
+        <div class="footer">Tip: For best results run a small backend (Flask) that exposes <code>/api/check</code> which returns JSON {label,confidence,evidence,similarity}.</div>
+      </div>
+
+      <div class="card card-right">
+        <div class="result-header">
+          <div>
+            <div id="labelBadge" class="label-pill">No result</div>
+            <div class="muted" style="margin-top:6px" id="confidenceText">Confidence: —</div>
+          </div>
+          <div style="width:110px;height:110px">
+            <canvas id="gaugeChart" width="110" height="110"></canvas>
+          </div>
+        </div>
+        <div style="margin-top:16px">
+          <h4 style="margin:0 0 8px 0">Top Evidence</h4>
+          <div id="evidenceList" class="evidence">
+            <div class="muted">No evidence yet.</div>
+          </div>
+        </div>
+        <div style="margin-top:14px">
+          <h4 style="margin:0 0 8px 0">Diagnostics</h4>
+          <div class="muted" id="diag">Status: idle</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+
+    const canvas = document.getElementById('bgCanvas');
+    const ctxBg = canvas.getContext('2d');
+    let particles = [];
+
+    function resizeCanvas(){
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    function initParticles(){
+      particles = [];
+      for(let i=0;i<80;i++){
+        particles.push({
+          x: Math.random()*canvas.width,
+          y: Math.random()*canvas.height,
+          vx: (Math.random()-0.5)*0.5,
+          vy: (Math.random()-0.5)*0.5,
+          r: Math.random()*2+1
+        });
+      }
+    }
+    function animateParticles(){
+      ctxBg.clearRect(0,0,canvas.width,canvas.height);
+      ctxBg.fillStyle = 'rgba(255,255,255,0.7)';
+      for(let p of particles){
+        p.x+=p.vx; p.y+=p.vy;
+        if(p.x<0||p.x>canvas.width) p.vx*=-1;
+        if(p.y<0||p.y>canvas.height) p.vy*=-1;
+        ctxBg.beginPath();
+        ctxBg.arc(p.x,p.y,p.r,0,Math.PI*2);
+        ctxBg.fill();
+      }
+
+      for(let i=0;i<particles.length;i++){
+        for(let j=i+1;j<particles.length;j++){
+          let dx=particles[i].x-particles[j].x;
+          let dy=particles[i].y-particles[j].y;
+          let dist=Math.sqrt(dx*dx+dy*dy);
+          if(dist<120){
+            ctxBg.strokeStyle=`rgba(255,255,255,${1-dist/120})`;
+            ctxBg.lineWidth=0.5;
+            ctxBg.beginPath();
+            ctxBg.moveTo(particles[i].x,particles[i].y);
+            ctxBg.lineTo(particles[j].x,particles[j].y);
+            ctxBg.stroke();
+          }
+        }
+      }
+      requestAnimationFrame(animateParticles);
+    }
+    initParticles();
+    animateParticles();
+  </script>
+</body>
+</html>
